@@ -1,0 +1,12 @@
+[Unit]
+Description=wizFlux controls the color temperature of wizLights over the course of a day.
+After=multi-user.target
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/bin/wizFlux.py
+StandardInput=tty-force
+
+[Install]
+WantedBy=multi-user.target
