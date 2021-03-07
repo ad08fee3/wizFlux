@@ -7,6 +7,11 @@ from pywizlight import wizlight, PilotBuilder, discovery, exceptions
 from random import sample
 from systemd.journal import JournalHandler
 
+
+# TODO: See if the bulbs can support RGBCW commands... Modify the library
+# TODO: Add typing
+# TODO: How to see logs for the pywizlight library
+
 # Lowest possible color temp is 2200k
 # Highest possible color temp is 6500k
 
@@ -28,7 +33,7 @@ SCHEDULE = [
 
 LOG = logging.getLogger(__name__)
 LOG.addHandler(JournalHandler())
-LOG.setLevel(logging.DEBUG)
+LOG.setLevel(logging.INFO)
 
 # These should match the index of the values in the schedule
 TIME_INDEX = 0
@@ -47,8 +52,8 @@ prev_temp_time = '00:01'
 prev_temp = 0
 next_temp_time = '00:02'
 next_temp = 0
-
-curr_state = STATE_INFLECTION
+START_STATE = STATE_INFLECTION
+curr_state = START_STATE
 prev_state = 0
 last_temp = 0
 
@@ -61,6 +66,10 @@ async def state_machine_run():
         prev_state = curr_state
 
     if curr_state == STATE_LIGHT_OFF:
+        """
+        During this state, ping a randomly-selected light to see if it's online yet.
+        Transitions to state_inflection if the light comes back online.
+        """
         LOG.info("Light is off...")
         # TODO: Come up with a way to listen for the device connecting to Wifi, somehow.
         #       Something more efficient than pinging, at least...
@@ -74,6 +83,10 @@ async def state_machine_run():
             await asyncio.sleep(1)  # Sleep and ping again.
 
     elif curr_state == STATE_INFLECTION:
+        """
+        Calculates the values that the light should be transitioning to.
+        Once values are populated, it changes to state_transition.
+        """
         LOG.debug("Calculating new values!")
         update_temp_targets()
         LOG.debug("Prev checkpoint: {} {}".format(prev_temp_time, prev_temp))
@@ -82,8 +95,13 @@ async def state_machine_run():
         await asyncio.sleep(1)
 
     elif curr_state == STATE_TRANSITION:
+        """
+        Using the target color temp, this state determines how quickly the lights must change.
+        Every minute the light color is updated with the new value.
+        Changes to state_inflection once the next time in the schedule is hit.
+        Changes to state_light_off if the lights stop responding to updates.
+        """
         LOG.debug("Adjusting color temp!")
-
         now = datetime.now()
         time_since_last_point = (now - prev_temp_time).total_seconds()
         time_to_next_point = (next_temp_time - now).total_seconds()
@@ -100,9 +118,11 @@ async def state_machine_run():
         if False: # last_temp == temp_to_set:
             # TODO: We should get the color temp of the light instead of not doing anything.
             #       If lights are not the right color, then send the update.
+            #       There is a bug where if the lights go off they may not be the right color when they
+            #       return, and this `False` is a temporary fix by updating the color every minute.
             LOG.debug("Not changing light color!")
         else:
-            LOG.info("Setting temp {}".format(temp_to_set))
+            LOG.info("Setting temp of Wiz Lights: {}".format(temp_to_set))
             success = await set_color_temp(temp_to_set)
             if success:
                 last_temp = temp_to_set
@@ -113,7 +133,10 @@ async def state_machine_run():
                 return # Break out immediately; don't sleep
         await asyncio.sleep(SECS_BETWEEN_LIGHT_UPDATES)
 
-    else: # Undefined state machine state
+    else:
+        """
+        Undefined state machine state. Abort service.
+        """
         LOG.critical("SYSTEM IN BAD STATE, ABORTING")
         quit()
 
@@ -123,11 +146,14 @@ async def main():
     while(True):
         await state_machine_run()
         LOG.debug("---------------------------------")
-    LOG.critical("Quitting")
+    LOG.critical("Quitting WizLightControl unexpectedly")
     quit()
 
 
 def update_temp_targets():
+    """
+    Determines what the color temperatures in the schedule should be transitioned to next.
+    """
     now = datetime.now()
     current_time = now.strftime(SCHEDULE_TIME_FORMAT)
     for i in range(len(SCHEDULE)):
@@ -140,6 +166,9 @@ def update_temp_targets():
 
 
 def populate_targets(index_of_prev, index_of_next):
+    """
+    Update the prev/next time/temp variables using the index of the prev/next values in the schedule.
+    """
     global prev_temp_time
     global prev_temp
     global next_temp_time
@@ -172,13 +201,19 @@ def parse_time_from_schedule(str_time, parsed_time_is_future):
 
 
 def ping_light(light_ip):
+    """
+    Used to determine if the lights are online or not.
+    """
     LOG.debug("Pinging {}".format(light_ip))
     response = os.system("ping -c 1 " + light_ip)
-    # and then check the response...
     return (response == 0)
 
 
 async def set_color_temp(temp):
+    """
+    Sends the color temperature change command to the lights.
+    Returns True if successful, False if the lights likely turned off.
+    """
     try:
         await asyncio.gather(
         L1.turn_on(PilotBuilder(colortemp = temp)),
