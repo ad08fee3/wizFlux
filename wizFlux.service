@@ -7,6 +7,9 @@ Conflicts=getty@tty1.service
 Type=simple
 ExecStart=/usr/bin/python3 /usr/bin/wizFlux.py
 StandardInput=tty-force
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=wizFlux
 
 [Install]
 WantedBy=multi-user.target
