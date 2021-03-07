@@ -1,5 +1,6 @@
 # wizFlux
 A python service that slowly changes the color of Wiz Lights over the course of the day.
+Shout out to https://github.com/sbidy/pywizlight
 
 # Installation
 Run the install.sh script with sudo.
