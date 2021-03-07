@@ -1,6 +1,6 @@
 import asyncio
-# import logging
-import logging.handlers
+import logging
+import os
 from datetime import datetime, timedelta
 # Using https://github.com/sbidy/pywizlight
 from pywizlight import wizlight, PilotBuilder, discovery, exceptions
@@ -9,10 +9,14 @@ from systemd.journal import JournalHandler
 
 # Lowest possible color temp is 2200k
 # Highest possible color temp is 6500k
-L1 = wizlight("192.168.1.115")  # Overhead light 1
-L2 = wizlight("192.168.1.116")  # Overhead light 2
-L3 = wizlight("192.168.1.145")  # Overhead light 3
-LIGHTS = [L1, L2, L3]
+
+L1_IP = "192.168.1.115"
+L2_IP = "192.168.1.116"
+L3_IP = "192.168.1.145"
+L1 = wizlight(L1_IP)  # Overhead light 1
+L2 = wizlight(L2_IP)  # Overhead light 2
+L3 = wizlight(L3_IP)  # Overhead light 3
+LIGHTS = [L1_IP, L2_IP, L3_IP]
 
 SCHEDULE = [
     ('05:00', 2200),
@@ -22,9 +26,9 @@ SCHEDULE = [
     ('23:30', 2200),
 ]
 
-_LOGGER = logging.getLogger(__name__)
-_LOGGER.addHandler(JournalHandler())
-_LOGGER.setLevel(logging.DEBUG)
+LOG = logging.getLogger(__name__)
+LOG.addHandler(JournalHandler())
+LOG.setLevel(logging.DEBUG)
 
 # These should match the index of the values in the schedule
 TIME_INDEX = 0
@@ -53,72 +57,73 @@ async def state_machine_run():
     global prev_state
     global last_temp
     if prev_state != curr_state:
-        _LOGGER.info("State changing, from {} to {}".format(prev_state, curr_state))
+        LOG.info("State changing, from {} to {}".format(prev_state, curr_state))
         prev_state = curr_state
 
     if curr_state == STATE_LIGHT_OFF:
-        _LOGGER.info("Light is off...")
+        LOG.info("Light is off...")
         # TODO: Come up with a way to listen for the device connecting to Wifi, somehow.
         #       Something more efficient than pinging, at least...
-        # TODO: Maybe use actual network pings instead of trying to get information.
         # TODO: See if the bulbs can support RGBCW commands... Modify the library
 
         # Ping a random light and see if we get a response.
-        pinged = await ping_light(sample(LIGHTS, 1)[0])
+        pinged = ping_light(sample(LIGHTS, 1)[0])
         if pinged:
             curr_state = STATE_INFLECTION  # We're back baybee!
         else:
             await asyncio.sleep(1)  # Sleep and ping again.
 
     elif curr_state == STATE_INFLECTION:
-        _LOGGER.debug("Calculating new values!")
+        LOG.debug("Calculating new values!")
         update_temp_targets()
-        _LOGGER.debug("Prev checkpoint: {} {}".format(prev_temp_time, prev_temp))
-        _LOGGER.debug("Next checkpoint: {} {}".format(next_temp_time, next_temp))
+        LOG.debug("Prev checkpoint: {} {}".format(prev_temp_time, prev_temp))
+        LOG.debug("Next checkpoint: {} {}".format(next_temp_time, next_temp))
         curr_state = STATE_TRANSITION
         await asyncio.sleep(1)
 
     elif curr_state == STATE_TRANSITION:
-        _LOGGER.debug("Adjusting color temp!")
+        LOG.debug("Adjusting color temp!")
 
         now = datetime.now()
         time_since_last_point = (now - prev_temp_time).total_seconds()
         time_to_next_point = (next_temp_time - now).total_seconds()
         if time_to_next_point <= 0:
             curr_state = STATE_INFLECTION  # After we update the next time, change states
-        _LOGGER.debug("time_since_last_point {}".format(time_since_last_point))
-        _LOGGER.debug("time_to_next_point {}".format(time_to_next_point))
+        LOG.debug("time_since_last_point {}".format(time_since_last_point))
+        LOG.debug("time_to_next_point {}".format(time_to_next_point))
         percent_transitioned = time_since_last_point / (time_to_next_point + time_since_last_point)
-        _LOGGER.debug("percent_transitioned {}".format(percent_transitioned))
+        LOG.debug("percent_transitioned {}".format(percent_transitioned))
         color_temp_delta = prev_temp - next_temp
         current_color_temp = prev_temp - (color_temp_delta * percent_transitioned)
-        _LOGGER.debug("current_color_temp {}".format(current_color_temp))
+        LOG.debug("current_color_temp {}".format(current_color_temp))
         temp_to_set = round(current_color_temp)
-        if last_temp == temp_to_set:
-            _LOGGER.debug("Not changing light color!")
+        if False: # last_temp == temp_to_set:
+            # TODO: We should get the color temp of the light instead of not doing anything.
+            #       If lights are not the right color, then send the update.
+            LOG.debug("Not changing light color!")
         else:
-            _LOGGER.debug("Setting temp {}".format(temp_to_set))
+            LOG.info("Setting temp {}".format(temp_to_set))
             success = await set_color_temp(temp_to_set)
             if success:
                 last_temp = temp_to_set
             else:
-                _LOGGER.info("LIGHTS TURNED OFF!")
+                LOG.info("LIGHTS TURNED OFF!")
                 curr_state = STATE_LIGHT_OFF
                 last_temp = 0
                 return # Break out immediately; don't sleep
         await asyncio.sleep(SECS_BETWEEN_LIGHT_UPDATES)
 
     else: # Undefined state machine state
-        _LOGGER.critical("SYSTEM IN BAD STATE, ABORTING")
+        LOG.critical("SYSTEM IN BAD STATE, ABORTING")
         quit()
 
 
 async def main():
-    _LOGGER.info("Starting WizLightControl")
+    LOG.info("Starting WizLightControl")
     while(True):
         await state_machine_run()
-        _LOGGER.debug("---------------------------------")
-    _LOGGER.critical("Quitting")
+        LOG.debug("---------------------------------")
+    LOG.critical("Quitting")
     quit()
 
 
@@ -165,18 +170,12 @@ def parse_time_from_schedule(str_time, parsed_time_is_future):
         parsed_time = parsed_time + timedelta(days=1)
     return parsed_time
 
-async def ping_light(light):
-    _LOGGER.debug("Pinging{} ".format(light))
-    try:
-        bulb_type = await light.get_bulbtype()
-        if bulb_type == None:
-            return False
-        _LOGGER.debug("Received value:{}".format(bulb_type.name))
-        _LOGGER.debug("Received value:{}".format(bulb_type.name))
-        return True
-    except exceptions.WizLightTimeOutError:
-        _LOGGER.debug("Ping failed - light is likely still off.")
-    return False
+
+def ping_light(light_ip):
+    LOG.debug("Pinging {}".format(light_ip))
+    response = os.system("ping -c 1 " + light_ip)
+    # and then check the response...
+    return (response == 0)
 
 
 async def set_color_temp(temp):
@@ -187,7 +186,7 @@ async def set_color_temp(temp):
         L3.turn_on(PilotBuilder(colortemp = temp)))
         return True
     except exceptions.WizLightTimeOutError:
-        _LOGGER.debug("Bulb connection errors! Are they turned off?")
+        LOG.debug("Bulb connection errors! Are they turned off?")
     return False
 
 
