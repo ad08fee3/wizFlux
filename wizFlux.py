@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sys
 from datetime import datetime, timedelta
 # Using https://github.com/sbidy/pywizlight
 from pywizlight import wizlight, PilotBuilder, discovery, exceptions
@@ -8,12 +9,14 @@ from random import sample
 from systemd.journal import JournalHandler
 
 
-# TODO: See if the bulbs can support RGBCW commands... Modify the library
 # TODO: Add typing
 # TODO: How to see logs for the pywizlight library
 
-# Lowest possible color temp is 2200k
+
 # Highest possible color temp is 6500k
+# Lowest possible color temp is 2200k
+# But using some RGB trickery, we can go lower! Unfortunately, things get confusing close to
+# the low end. For ease of programming, I am saying 0k is 100% red LED and nothing else.
 
 L1_IP = "192.168.1.115"
 L2_IP = "192.168.1.116"
@@ -24,16 +27,21 @@ L3 = wizlight(L3_IP)  # Overhead light 3
 LIGHTS = [L1_IP, L2_IP, L3_IP]
 
 SCHEDULE = [
+    ('01:00', 1400),
     ('05:00', 2200),
     ('06:00', 4600),
     ('18:00', 4600),
     ('22:00', 3000),
-    ('23:30', 2200),
+    ('23:00', 2200),
 ]
+LOGS_TO_STDOUT = False
 
 LOG = logging.getLogger(__name__)
-LOG.addHandler(JournalHandler())
-LOG.setLevel(logging.INFO)
+if LOGS_TO_STDOUT:
+    LOG.addHandler(logging.StreamHandler(sys.stdout))
+else:
+    LOG.addHandler(JournalHandler())
+LOG.setLevel(logging.DEBUG)
 
 # These should match the index of the values in the schedule
 TIME_INDEX = 0
@@ -56,6 +64,7 @@ START_STATE = STATE_INFLECTION
 curr_state = START_STATE
 prev_state = 0
 last_temp = 0
+in_rgb_mode = False
 
 async def state_machine_run():
     global curr_state
@@ -209,21 +218,76 @@ def ping_light(light_ip):
     return (response == 0)
 
 
-async def set_color_temp(temp):
+async def set_color_rgbcw(red, green, blue, cold, warm):
     """
-    Sends the color temperature change command to the lights.
+    Sends the color change command to the lights with RGB, cold white and warm white.
     Returns True if successful, False if the lights likely turned off.
     """
+    if cold == 0:
+        cold = None
+    if warm == 0:
+        warm = None
     try:
         await asyncio.gather(
-        L1.turn_on(PilotBuilder(colortemp = temp)),
-        L2.turn_on(PilotBuilder(colortemp = temp)),
-        L3.turn_on(PilotBuilder(colortemp = temp)))
+        L1.turn_on(PilotBuilder(rgb = (red, green, blue), warm_white = warm, cold_white = cold)),
+        L2.turn_on(PilotBuilder(rgb = (red, green, blue), warm_white = warm, cold_white = cold)),
+        L3.turn_on(PilotBuilder(rgb = (red, green, blue), warm_white = warm, cold_white = cold)))
         return True
     except exceptions.WizLightTimeOutError:
         LOG.debug("Bulb connection errors! Are they turned off?")
     return False
 
 
+async def transition_to_rgb_mode():
+    """
+    Changes the colors of the lights to these values, one at a time, so it's not
+    noticable. R=255 and ww=200 is the closest I could get to "2200k" so this transition
+    is not really noticable at all.
+    """
+    LOG.debug("Transitioning from color temp mode to RGB mode...")
+    await L1.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
+    await asyncio.sleep(3)
+    await L2.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
+    await asyncio.sleep(3)
+    await L3.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
+    await asyncio.sleep(3)
+
+
+def calculate_warm_val_from_temp(temp):
+    """
+    This is used to convert a color temp into the value that the warm LED
+    should display. This formula is based on a line of best fit from some
+    testing I did with a light meter.
+    """
+    return round((0.0000000325 * pow(temp, 3)) - (0.00005 * pow(temp, 2)) + (0.0426 * (temp)))
+
+
+async def set_color_temp(temp):
+    """
+    Sends the color temperature change command to the lights.
+    Returns True if successful, False if the lights likely turned off.
+    """
+    global in_rgb_mode
+    if temp < 2200:
+        if in_rgb_mode == False:
+            await transition_to_rgb_mode()
+            in_rgb_mode = True
+        warm_value = calculate_warm_val_from_temp(temp)
+        LOG.debug("Calculated warm LED color of {}".format(warm_value))
+        return await set_color_rgbcw(255, 0, 0, 0, warm_value)
+    else:
+        in_rgb_mode = False
+        try:
+            await asyncio.gather(
+            L1.turn_on(PilotBuilder(colortemp = temp)),
+            L2.turn_on(PilotBuilder(colortemp = temp)),
+            L3.turn_on(PilotBuilder(colortemp = temp)))
+            return True
+        except exceptions.WizLightTimeOutError:
+            LOG.debug("Bulb connection errors! Are they turned off?")
+        return False
+
+
 loop = asyncio.get_event_loop()
 loop.run_until_complete(main())
+
