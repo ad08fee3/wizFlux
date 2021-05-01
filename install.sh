@@ -6,6 +6,12 @@ fi
 
 echo "Installing pywizlight..."
 pip3 install pywizlight
+ret=$?
+if [[ $ret -ne 0 ]]; then
+    echo "Please make sure pip3 is installed:"
+    echo "    sudo apt install python3-pip"
+    exit 1
+fi
 
 echo "Linking wizFlux service files..."
 
