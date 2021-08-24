@@ -20,9 +20,9 @@ from systemd.journal import JournalHandler
 # Now you can set a custom color and it will hold! Just turn off the lights for 10 secs or set the lights
 # to the custom "magic" scene color listed below and it will resume normal operations.
 
-L1_IP = "192.168.1.115"
-L2_IP = "192.168.1.116"
-L3_IP = "192.168.1.145"
+L1_IP = "192.168.3.105"
+L2_IP = "192.168.3.122"
+L3_IP = "192.168.3.111"
 L1 = wizlight(L1_IP)  # Overhead light 1
 L2 = wizlight(L2_IP)  # Overhead light 2
 L3 = wizlight(L3_IP)  # Overhead light 3
