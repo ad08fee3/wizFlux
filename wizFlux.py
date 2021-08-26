@@ -134,8 +134,12 @@ async def state_machine_run():
         # First, check if the current light temp is the one we set it to.
         # If it's not, jump to STATE_CUSTOM_COLOR
         red, green, blue, reported_color_temp = await get_color_from_light()
-        LOG.debug("Reported temp {}, last-set temp {}".format(reported_color_temp, last_temp))
-        if reported_color_temp != last_temp and last_temp != 0:
+        # Does the light say we are in RGB mode?
+        reported_in_rgb_mode = (red == 255 and green == 0 and blue == 0 and reported_color_temp == None)
+        global in_rgb_mode
+        correctly_in_rgb_mode = (in_rgb_mode and reported_in_rgb_mode)
+        LOG.debug("Reported temp {}, last-set temp {}, correctly in rgb? {}".format(reported_color_temp, last_temp, correctly_in_rgb_mode))
+        if reported_color_temp != last_temp and last_temp != 0 and not correctly_in_rgb_mode:
             LOG.debug("Lights were changed manually. Pausing Flux..")
             LOG.debug("red {}, green {}, blue {}".format(red,green,blue))
             curr_state = STATE_CUSTOM_COLOR
