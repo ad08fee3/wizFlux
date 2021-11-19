@@ -23,10 +23,10 @@ from systemd.journal import JournalHandler
 L1_IP = "192.168.3.105"
 L2_IP = "192.168.3.122"
 L3_IP = "192.168.3.111"
+LIGHT_IPS = [L1_IP, L2_IP, L3_IP]
 L1 = wizlight(L1_IP)  # Overhead light 1
 L2 = wizlight(L2_IP)  # Overhead light 2
 L3 = wizlight(L3_IP)  # Overhead light 3
-LIGHT_IPS = [L1_IP, L2_IP, L3_IP]
 LIGHTS = [L1, L2, L3]
 
 SCHEDULE = [
@@ -54,18 +54,17 @@ SCHEDULE_TIME_FORMAT = '%H:%M'
 
 SECS_BETWEEN_LIGHT_UPDATES = 60
 
-# STATES:
+# LIGHT STATES:
 STATE_LIGHT_OFF = 1
-STATE_INFLECTION = 2  # TODO: Inflection shouldn't be a point. Make a "calcTemp() function"
-STATE_TRANSITION = 3
-STATE_CUSTOM_COLOR = 4
+STATE_ON = 2
+STATE_CUSTOM_COLOR = 3
 
 # Some globals
 prev_temp_time = '00:01'
 prev_temp = 0
 next_temp_time = '00:02'
 next_temp = 0
-START_STATE = STATE_INFLECTION
+START_STATE = STATE_LIGHT_OFF
 curr_state = START_STATE
 prev_state = 0
 last_temp = 0
@@ -82,7 +81,7 @@ async def state_machine_run():
     if curr_state == STATE_LIGHT_OFF:
         """
         During this state, ping a randomly-selected light to see if it's online yet.
-        Transitions to state_inflection if the light comes back online.
+        Transitions to STATE_ON if the light comes back online.
         """
         LOG.info("Light is off...")
         # TODO: Come up with a way to listen for the device connecting to Wifi, somehow.
@@ -92,64 +91,43 @@ async def state_machine_run():
         # Ping a random light and see if we get a response.
         pinged = ping_light(sample(LIGHT_IPS, 1)[0])
         if pinged:
-            curr_state = STATE_INFLECTION  # We're back baybee!
+            LOG.info("Light is back; immediately setting color temp")
+            curr_state = STATE_ON
+            temp_to_set = get_new_color_temp()
+            await set_color_temp(temp_to_set, immediately=True)
             last_temp = 0
         else:
-            await asyncio.sleep(1)  # Sleep and ping again.
+            await asyncio.sleep(2)  # Sleep and ping again.
 
-    elif curr_state == STATE_INFLECTION:
-        """
-        Calculates the values that the light should be transitioning to.
-        Once values are populated, it changes to state_transition.
-        """
-        LOG.debug("Calculating new values!")
-        update_temp_targets()
-        LOG.debug("Prev checkpoint: {} {}".format(prev_temp_time, prev_temp))
-        LOG.debug("Next checkpoint: {} {}".format(next_temp_time, next_temp))
-        curr_state = STATE_TRANSITION
-        await asyncio.sleep(1)
-
-    elif curr_state == STATE_TRANSITION:
+    elif curr_state == STATE_ON:
         """
         Using the target color temp, this state determines how quickly the lights must change.
         Every minute the light color is updated with the new value.
-        Changes to state_inflection once the next time in the schedule is hit.
         Changes to state_light_off if the lights stop responding to updates.
         """
         LOG.debug("Adjusting color temp!")
-        now = datetime.now()
-        time_since_last_point = (now - prev_temp_time).total_seconds()
-        time_to_next_point = (next_temp_time - now).total_seconds()
-        if time_to_next_point <= 0:
-            curr_state = STATE_INFLECTION  # After we update the next time, change states
-        LOG.debug("time_since_last_point {}".format(time_since_last_point))
-        LOG.debug("time_to_next_point {}".format(time_to_next_point))
-        percent_transitioned = time_since_last_point / (time_to_next_point + time_since_last_point)
-        LOG.debug("percent_transitioned {}".format(percent_transitioned))
-        color_temp_delta = prev_temp - next_temp
-        current_color_temp = prev_temp - (color_temp_delta * percent_transitioned)
-        LOG.debug("current_color_temp {}".format(current_color_temp))
-        temp_to_set = round(current_color_temp)
+        temp_to_set = get_new_color_temp()
 
         # First, check if the current light temp is the one we set it to.
         # If it's not, jump to STATE_CUSTOM_COLOR
         red, green, blue, reported_color_temp = await get_color_from_light()
+        if red == None and green == None and blue == None and reported_color_temp == None:
+            # We must have gotten no response from the light. Assume we are off!
+            curr_state = STATE_LIGHT_OFF
+            last_temp = 0
+            return
         # Does the light say we are in RGB mode?
         reported_in_rgb_mode = (red == 255 and green == 0 and blue == 0 and reported_color_temp == None)
         global in_rgb_mode
         correctly_in_rgb_mode = (in_rgb_mode and reported_in_rgb_mode)
-        LOG.debug("Reported temp {}, last-set temp {}, correctly in rgb? {}".format(reported_color_temp, last_temp, correctly_in_rgb_mode))
+        LOG.debug("Reported temp {}, last-set temp {}, correctly using rgb mode? {}".format(reported_color_temp, last_temp, correctly_in_rgb_mode))
         if reported_color_temp != last_temp and last_temp != 0 and not correctly_in_rgb_mode:
             LOG.debug("Lights were changed manually. Pausing Flux..")
             LOG.debug("red {}, green {}, blue {}".format(red,green,blue))
             curr_state = STATE_CUSTOM_COLOR
             return
 
-        if False: # last_temp == temp_to_set:
-            # TODO: We should get the color temp of the light instead of not doing anything.
-            #       If lights are not the right color, then send the update.
-            #       There is a bug where if the lights go off they may not be the right color when they
-            #       return, and this `False` is a temporary fix by updating the color every minute.
+        if last_temp == temp_to_set:
             LOG.debug("Not changing light color!")
         else:
             LOG.info("Setting temp of Wiz Lights: {}".format(temp_to_set))
@@ -171,12 +149,12 @@ async def state_machine_run():
         magic_blue = 9
         if red == magic_red and green == magic_green and blue == magic_blue:
             LOG.debug("Magic 'reset' color used; resetting to normal runtime mode")
-            curr_state = STATE_TRANSITION
+            curr_state = STATE_ON
             last_temp = 0
         else:
-            pinged = ping_light(sample(LIGHT_IPS, 1)[0])
-            if pinged:
-                await asyncio.sleep(5)  # Sleep and ping again.
+            pinged_successfully = ping_light(sample(LIGHT_IPS, 1)[0])
+            if pinged_successfully:
+                await asyncio.sleep(5)  # Sleep and run through the state machine agauin.
             else:
                 LOG.debug("Lights have been turned off. Resuming normal operations!")
                 curr_state = STATE_LIGHT_OFF
@@ -188,6 +166,9 @@ async def state_machine_run():
         LOG.critical("SYSTEM IN BAD STATE, ABORTING")
         quit()
 
+    # End of state machine.
+    pass
+
 
 async def main():
     LOG.info("Starting WizLightControl")
@@ -196,6 +177,29 @@ async def main():
         LOG.debug("---------------------------------")
     LOG.critical("Quitting WizLightControl unexpectedly")
     quit()
+
+
+def get_new_color_temp():
+    """ Calculate the color temp that the lights should currently display.
+    """
+    global prev_temp_time
+    global prev_temp
+    global next_temp_time
+    global next_temp
+    update_temp_targets()
+    now = datetime.now()
+    time_since_last_point = (now - prev_temp_time).total_seconds()
+    time_to_next_point = (next_temp_time - now).total_seconds()
+    LOG.debug("time_since_last_point {}".format(time_since_last_point))
+    LOG.debug("time_to_next_point {}".format(time_to_next_point))
+    percent_transitioned = time_since_last_point / (time_to_next_point + time_since_last_point)
+    LOG.debug("percent_transitioned {}".format(percent_transitioned))
+    color_temp_delta = prev_temp - next_temp
+    current_color_temp = prev_temp - (color_temp_delta * percent_transitioned)
+    LOG.debug("Prev checkpoint: {} {}".format(prev_temp_time, prev_temp))
+    LOG.debug("current_color_temp {}".format(current_color_temp))
+    LOG.debug("Next checkpoint: {} {}".format(next_temp_time, next_temp))
+    return round(current_color_temp)
 
 
 def update_temp_targets():
@@ -207,6 +211,7 @@ def update_temp_targets():
     for i in range(len(SCHEDULE)):
         if SCHEDULE[i][TIME_INDEX] > current_time:
             # Found the right range!
+            # Populate the targets using the previous and next values.
             populate_targets(i-1, i)
             return
     # At this point, we will have returned *UNLESS* the next transition is tomorrow morning.
@@ -284,15 +289,20 @@ async def transition_to_rgb_mode():
     is not really noticable at all.
     """
     LOG.debug("Transitioning from color temp mode to RGB mode...")
-    await L1.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
-    await asyncio.sleep(3)
-    await L2.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
-    await asyncio.sleep(3)
-    await L3.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
-    await asyncio.sleep(3)
+    try:
+        await L1.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
+        await asyncio.sleep(3)
+        await L2.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
+        await asyncio.sleep(3)
+        await L3.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
+        await asyncio.sleep(3)
+    except exceptions.WizLightTimeOutError:
+        LOG.debug("Bulb connection errors! Are they turned off?")
 
 
 async def get_color_from_light():
+    """ Get the current color values from the first bulb.
+    """
     color_received = False
     retries = 0
     while not color_received and retries < 3:
@@ -311,6 +321,7 @@ async def get_color_from_light():
     red, green, blue = state.get_rgb()
     return red, green, blue, color_temp
 
+
 def calculate_warm_val_from_temp(temp):
     """
     This is used to convert a color temp into the value that the warm LED
@@ -320,16 +331,17 @@ def calculate_warm_val_from_temp(temp):
     return round((0.0000000325 * pow(temp, 3)) - (0.00005 * pow(temp, 2)) + (0.0426 * (temp)))
 
 
-async def set_color_temp(temp):
+async def set_color_temp(temp, immediately=False):
     """
     Sends the color temperature change command to the lights.
     Returns True if successful, False if the lights likely turned off.
+    If arg "immediately" is true, don't wait to transition smoothly; just jump to the color.
     """
     global in_rgb_mode
     if temp < 2200:
-        if in_rgb_mode == False:
+        if in_rgb_mode == False and not immediately:
             await transition_to_rgb_mode()
-            in_rgb_mode = True
+        in_rgb_mode = True
         warm_value = calculate_warm_val_from_temp(temp)
         LOG.debug("Calculated warm LED color of {}".format(warm_value))
         return await set_color_rgbcw(255, 0, 0, 0, warm_value)
