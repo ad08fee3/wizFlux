@@ -45,7 +45,7 @@ if LOGS_TO_STDOUT:
     LOG.addHandler(logging.StreamHandler(sys.stdout))
 else:
     LOG.addHandler(JournalHandler())
-LOG.setLevel(logging.DEBUG)
+LOG.setLevel(logging.INFO)
 
 # These should match the index of the values in the schedule
 TIME_INDEX = 0
@@ -69,6 +69,8 @@ curr_state = START_STATE
 prev_state = 0
 last_temp = 0
 in_rgb_mode = False
+last_temp_update_time = datetime.now() - timedelta(days=1)  # Start with some old value
+current_color_temp = 0
 
 async def state_machine_run():
     global curr_state
@@ -181,13 +183,21 @@ async def main():
 
 def get_new_color_temp():
     """ Calculate the color temp that the lights should currently display.
+    If the color temp was calculated in the last 60 seconds, return that same value back.
     """
     global prev_temp_time
     global prev_temp
     global next_temp_time
     global next_temp
-    update_temp_targets()
+    global last_temp_update_time
+    global current_color_temp
+
     now = datetime.now()
+    if now < last_temp_update_time + timedelta(seconds=60):
+        LOG.debug("Calculated temp recently. Re-using the old temp.")
+        return current_color_temp
+    LOG.debug("Calculating new color temp.")
+    update_temp_targets()
     time_since_last_point = (now - prev_temp_time).total_seconds()
     time_to_next_point = (next_temp_time - now).total_seconds()
     LOG.debug("time_since_last_point {}".format(time_since_last_point))
@@ -195,11 +205,12 @@ def get_new_color_temp():
     percent_transitioned = time_since_last_point / (time_to_next_point + time_since_last_point)
     LOG.debug("percent_transitioned {}".format(percent_transitioned))
     color_temp_delta = prev_temp - next_temp
-    current_color_temp = prev_temp - (color_temp_delta * percent_transitioned)
+    current_color_temp = round(prev_temp - (color_temp_delta * percent_transitioned))
     LOG.debug("Prev checkpoint: {} {}".format(prev_temp_time, prev_temp))
     LOG.debug("current_color_temp {}".format(current_color_temp))
     LOG.debug("Next checkpoint: {} {}".format(next_temp_time, next_temp))
-    return round(current_color_temp)
+    last_temp_update_time = now
+    return current_color_temp
 
 
 def update_temp_targets():
