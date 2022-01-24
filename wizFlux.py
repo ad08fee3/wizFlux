@@ -31,6 +31,7 @@ LIGHTS = [L1, L2, L3]
 
 SCHEDULE = [
     ('01:00', 1400),
+    ('04:00', 1400),
     ('05:00', 2200),
     ('06:00', 6000),
     ('11:00', 4600),
@@ -45,6 +46,8 @@ if LOGS_TO_STDOUT:
     LOG.addHandler(logging.StreamHandler(sys.stdout))
 else:
     LOG.addHandler(JournalHandler())
+
+# CHANGE LOG LEVEL HERE:
 LOG.setLevel(logging.INFO)
 
 # These should match the index of the values in the schedule
@@ -96,6 +99,7 @@ async def state_machine_run():
             LOG.info("Light is back; immediately setting color temp")
             curr_state = STATE_ON
             temp_to_set = get_new_color_temp()
+            await set_brightness_level(255)
             await set_color_temp(temp_to_set, immediately=True)
             last_temp = 0
         else:
@@ -151,6 +155,7 @@ async def state_machine_run():
         magic_blue = 9
         if red == magic_red and green == magic_green and blue == magic_blue:
             LOG.debug("Magic 'reset' color used; resetting to normal runtime mode")
+            await set_brightness_level(255)
             curr_state = STATE_ON
             last_temp = 0
         else:
@@ -367,6 +372,20 @@ async def set_color_temp(temp, immediately=False):
         except exceptions.WizLightTimeOutError:
             LOG.debug("Bulb connection errors! Are they turned off?")
         return False
+
+async def set_brightness_level(brightness_level):
+    """
+    Given a brightness level (0-255), set the brightness.
+    """
+    if brightness_level < 0:
+        brightness_level = 0
+    elif brightness_level > 255:
+        brightness_level = 255
+    LOG.debug(f"Setting brightness to {brightness_level}")
+    await asyncio.gather(
+    L1.turn_on(PilotBuilder(brightness = brightness_level)),
+    L2.turn_on(PilotBuilder(brightness = brightness_level)),
+    L3.turn_on(PilotBuilder(brightness = brightness_level)))
 
 
 loop = asyncio.get_event_loop()
