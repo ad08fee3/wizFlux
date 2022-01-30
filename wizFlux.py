@@ -373,7 +373,8 @@ async def set_color_temp(temp, immediately=False):
             LOG.debug("Bulb connection errors! Are they turned off?")
         return False
 
-async def set_brightness_level(brightness_level):
+
+async def set_brightness_level(brightness_level, retry=True):
     """
     Given a brightness level (0-255), set the brightness.
     """
@@ -382,10 +383,16 @@ async def set_brightness_level(brightness_level):
     elif brightness_level > 255:
         brightness_level = 255
     LOG.debug(f"Setting brightness to {brightness_level}")
-    await asyncio.gather(
-    L1.turn_on(PilotBuilder(brightness = brightness_level)),
-    L2.turn_on(PilotBuilder(brightness = brightness_level)),
-    L3.turn_on(PilotBuilder(brightness = brightness_level)))
+    try:
+        await asyncio.gather(
+        L1.turn_on(PilotBuilder(brightness = brightness_level)),
+        L2.turn_on(PilotBuilder(brightness = brightness_level)),
+        L3.turn_on(PilotBuilder(brightness = brightness_level)))
+    except exceptions.WizLightTimeOutError:
+        LOG.debug("Failed to set brightness level due to TimeOutError.")
+        if retry:
+            LOG.debug("Trying to set brightness one more time...")
+            set_brightness_level(brightness_level, retry=False)
 
 
 loop = asyncio.get_event_loop()
