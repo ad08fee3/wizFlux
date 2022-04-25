@@ -75,6 +75,11 @@ in_rgb_mode = False
 last_temp_update_time = datetime.now() - timedelta(days=1)  # Start with some old value
 current_color_temp = 0
 
+# Used to "reset" from a custom color back to WizFlux
+MAGIC_RED = 0
+MAGIC_GREEN = 47
+MAGIC_BLUE = 9
+
 async def state_machine_run():
     global curr_state
     global prev_state
@@ -150,10 +155,7 @@ async def state_machine_run():
     elif curr_state == STATE_CUSTOM_COLOR:
         LOG.debug("Lights are set to a custom color. Flux is paused.")
         red, green, blue, reported_color_temp = await get_color_from_light()
-        magic_red = 0
-        magic_green = 47
-        magic_blue = 9
-        if red == magic_red and green == magic_green and blue == magic_blue:
+        if red == MAGIC_RED and green == MAGIC_GREEN and blue == MAGIC_BLUE:
             LOG.debug("Magic 'reset' color used; resetting to normal runtime mode")
             await set_brightness_level(255)
             curr_state = STATE_ON
@@ -393,6 +395,14 @@ async def set_brightness_level(brightness_level, retry=True):
         if retry:
             LOG.debug("Trying to set brightness one more time...")
             set_brightness_level(brightness_level, retry=False)
+
+
+async def set_magic_reset_color():
+    """
+    This is here just so you can call it manually if need be.
+    This should only need called if something gets messed up and you need to re-set the scene in the Wiz app.
+    """
+    return await set_color_rgbcw(MAGIC_RED, MAGIC_GREEN, MAGIC_BLUE, 0, 0)
 
 
 loop = asyncio.get_event_loop()
