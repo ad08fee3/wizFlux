@@ -6,12 +6,11 @@ from datetime import datetime, timedelta
 # Using https://github.com/sbidy/pywizlight
 from pywizlight import wizlight, PilotBuilder, discovery, exceptions
 from random import sample
-from systemd.journal import JournalHandler
-
 
 # TODO: Add typing
 # TODO: How to see logs for the pywizlight library
-
+# TODO: Logging is now non-ideal. Look into proper logging methods.
+# TODO: Installation is a bit borked. A few too many manual steps. And it's probably not best practice.
 
 # Highest possible color temp is 6500k
 # Lowest possible color temp is 2200k
@@ -40,13 +39,9 @@ SCHEDULE = [
     ('22:00', 3000),
     ('23:00', 2200),
 ]
-LOGS_TO_STDOUT = False
 
 LOG = logging.getLogger(__name__)
-if LOGS_TO_STDOUT:
-    LOG.addHandler(logging.StreamHandler(sys.stdout))
-else:
-    LOG.addHandler(JournalHandler())
+LOG.addHandler(logging.StreamHandler(sys.stdout))
 
 # CHANGE LOG LEVEL HERE:
 LOG.setLevel(logging.INFO)
