@@ -324,7 +324,7 @@ async def get_color_from_light():
         try:
             state = await light_to_query.updateState()
             color_received = True
-        except exceptions.WizLightTimeOutError:
+        except exceptions.WizLightConnectionError:
             LOG.debug("Light did not respond to the get_color query")
             color_received = False
             retries = retries + 1
