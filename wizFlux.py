@@ -367,7 +367,7 @@ async def set_color_temp(temp, immediately=False):
             L2.turn_on(PilotBuilder(colortemp = temp)),
             L3.turn_on(PilotBuilder(colortemp = temp)))
             return True
-        except exceptions.WizLightTimeOutError:
+        except exceptions.WizLightConnectionError:
             LOG.debug("Bulb connection errors! Are they turned off?")
         return False
 
@@ -386,8 +386,8 @@ async def set_brightness_level(brightness_level, retry=True):
         L1.turn_on(PilotBuilder(brightness = brightness_level)),
         L2.turn_on(PilotBuilder(brightness = brightness_level)),
         L3.turn_on(PilotBuilder(brightness = brightness_level)))
-    except exceptions.WizLightTimeOutError:
-        LOG.debug("Failed to set brightness level due to TimeOutError.")
+    except exceptions.WizLightConnectionError:
+        LOG.debug("Failed to set brightness level due to WizLightConnectionError.")
         if retry:
             LOG.debug("Trying to set brightness one more time...")
             set_brightness_level(brightness_level, retry=False)
