@@ -291,7 +291,7 @@ async def set_color_rgbcw(red, green, blue, cold, warm):
         L2.turn_on(PilotBuilder(rgb = (red, green, blue), warm_white = warm, cold_white = cold)),
         L3.turn_on(PilotBuilder(rgb = (red, green, blue), warm_white = warm, cold_white = cold)))
         return True
-    except exceptions.WizLightTimeOutError:
+    except exceptions.WizLightConnectionError:
         LOG.debug("Bulb connection errors! Are they turned off?")
     return False
 
@@ -310,7 +310,7 @@ async def transition_to_rgb_mode():
         await asyncio.sleep(3)
         await L3.turn_on(PilotBuilder(rgb = (255, 0, 0), warm_white = 200))
         await asyncio.sleep(3)
-    except exceptions.WizLightTimeOutError:
+    except exceptions.WizLightConnectionError:
         LOG.debug("Bulb connection errors! Are they turned off?")
 
 
