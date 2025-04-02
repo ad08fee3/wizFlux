@@ -70,6 +70,7 @@ last_temp = 0
 in_rgb_mode = False
 last_temp_update_time = datetime.now() - timedelta(days=1)  # Start with some old value
 current_color_temp = 0
+offline_ping_count = 0
 
 # Used to "reset" from a custom color back to WizFlux
 MAGIC_RED = 0
@@ -80,6 +81,7 @@ async def state_machine_run():
     global curr_state
     global prev_state
     global last_temp
+    global offline_ping_count
     if prev_state != curr_state:
         LOG.info("State changing, from {} to {}".format(prev_state, curr_state))
         prev_state = curr_state
@@ -159,10 +161,16 @@ async def state_machine_run():
         else:
             pinged_successfully = ping_light(sample(LIGHT_IPS, 1)[0])
             if pinged_successfully:
-                await asyncio.sleep(5)  # Sleep and run through the state machine agauin.
+                offline_ping_count = 0
+                await asyncio.sleep(10)  # Sleep and run through the state machine again.
             else:
-                LOG.debug("Lights have been turned off. Resuming normal operations!")
-                curr_state = STATE_LIGHT_OFF
+                if offline_ping_count >= 1:
+                    LOG.debug("Lights have been turned off. Resuming normal operations!")
+                    offline_ping_count = 0
+                    curr_state = STATE_LIGHT_OFF
+                else:
+                    offline_ping_count += 1
+                    await asyncio.sleep(10)  # Sleep and run through the state machine again.
 
     else:
         """
