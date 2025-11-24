@@ -5,8 +5,8 @@ Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /usr/bin/wizFlux.py
 StandardInput=tty-force
+ExecStart=/home/evan/workplace/wizFlux/.venv/wizFlux/bin/python3 /usr/bin/wizFlux.py
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=wizFlux
